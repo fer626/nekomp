@@ -1,0 +1,1 @@
+echo "Commit creado correctamente por: $(git config --global user.name)."

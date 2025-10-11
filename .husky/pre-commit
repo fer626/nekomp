@@ -1,0 +1,2 @@
+# Pre-commit hook - add any pre-commit checks here if needed
+./scripts/pre-commit.sh

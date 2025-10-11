@@ -1,0 +1,1 @@
+echo "Creando commit del $(git config --global user.name)..."

@@ -1,0 +1,35 @@
+{
+  "name": "@fer626/nekomponents",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "delete:packages": "rm -rf node_modules",
+    "reset:packages": "pnpm delete:packages && pnpm install",
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "storybook:dev": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
+    "@storybook/vue3-vite": "^9.1.10",
+    "@types/node": "^24.6.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/tsconfig": "^0.8.1",
+    "husky": "^9.1.7",
+    "nx": "21.6.4",
+    "storybook": "^9.1.10",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7",
+    "vue-tsc": "^3.1.0"
+  },
+  "nx": {}
+}
