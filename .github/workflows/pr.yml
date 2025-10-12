@@ -1,0 +1,328 @@
+name: PR Validation - Nekomponents
+description: |
+    This workflow validates pull requests to the main branch.
+    It runs unit tests and builds the project to ensure code quality.
+
+on:
+    pull_request:
+        branches:
+            - main
+        types: [opened, synchronize, reopened]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pull-requests: write
+    issues: write
+
+env:
+    HUSKY: 0
+    NODE_OPTIONS: --max_old_space_size=4096
+
+jobs:
+    setup:
+        runs-on: ubuntu-latest
+        name: Setup dependencies and cache
+        outputs:
+            NODE_VERSION: ${{ steps.get-versions.outputs.NODE_VERSION }}
+            PNPM_VERSION: ${{ steps.get-versions.outputs.PNPM_VERSION }}
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.ref }}
+
+            - name: Install system dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y jq
+
+            - name: Get package manager version and node version
+              id: get-versions
+              run: |
+                  # Get package manager version from package.json using packageManager key (format is pnpm@10.17.1)
+                  PNPM_VERSION=$(cat package.json | jq -r '.packageManager' | awk -F'@' '{print $2}')
+                  if [ -z "$PNPM_VERSION" ]; then PNPM_VERSION="10"; fi
+                  # Use Node 20 as specified in current workflow
+                  NODE_VERSION="20"
+                  echo "::notice::Node version: $NODE_VERSION"
+                  echo "::notice::PNPM version: $PNPM_VERSION"
+                  # Set to output for next steps
+                  echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_OUTPUT
+                  echo "PNPM_VERSION=$PNPM_VERSION" >> $GITHUB_OUTPUT
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ steps.get-versions.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ steps.get-versions.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+    test:
+        runs-on: ubuntu-latest
+        name: Run unit tests
+        needs: setup
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.ref }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Run tests
+              run: pnpm test
+
+    build:
+        runs-on: ubuntu-latest
+        name: Build project
+        needs: [setup, test]
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.ref }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Build project
+              run: pnpm build
+
+            - name: Build Storybook
+              run: pnpm build-storybook
+
+            - name: Upload build artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: build-artifacts-pr-${{ github.event.pull_request.number }}
+                  path: |
+                      dist/
+                      storybook-static/
+                  retention-days: 7
+
+    validation-summary:
+        runs-on: ubuntu-latest
+        name: PR Validation Summary
+        needs: [setup, test, build]
+        if: always()
+        steps:
+            - name: Remove old build labels
+              if: always()
+              uses: actions-ecosystem/action-remove-labels@v1
+              continue-on-error: true
+              with:
+                  labels: |
+                      build success
+                      build failed
+
+            - name: Check job results and capture errors
+              id: check-results
+              if: always()
+              run: |
+                  echo "test_result=${{ needs.test.result }}" >> $GITHUB_OUTPUT
+                  echo "build_result=${{ needs.build.result }}" >> $GITHUB_OUTPUT
+                  
+                  # Initialize error messages
+                  ERROR_SUMMARY=""
+                  
+                  # Check test result
+                  if [ "${{ needs.test.result }}" == "failure" ]; then
+                    ERROR_SUMMARY="${ERROR_SUMMARY}### ❌ Unit Tests Failed\n\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}The test suite encountered failures. This could be due to:\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Failing test cases\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Syntax errors in test files\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Missing test dependencies\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Test timeout issues\n\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}**Action Required**: Review the test logs in the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) to see specific test failures.\n\n"
+                  fi
+                  
+                  # Check build result
+                  if [ "${{ needs.build.result }}" == "failure" ]; then
+                    ERROR_SUMMARY="${ERROR_SUMMARY}### ❌ Build Failed\n\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}The build process failed. Common causes:\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- TypeScript compilation errors\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Missing dependencies or imports\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Vite configuration issues\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}- Storybook build errors\n\n"
+                    ERROR_SUMMARY="${ERROR_SUMMARY}**Action Required**: Review the build logs in the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) to see the exact error.\n\n"
+                  fi
+                  
+                  # Save error summary to output (escape newlines for GitHub Actions)
+                  echo "error_summary<<EOF" >> $GITHUB_OUTPUT
+                  echo -e "$ERROR_SUMMARY" >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+                  
+                  # Determine final status
+                  if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.build.result }}" == "failure" ]; then
+                    echo "::error::PR validation failed! Please check the test and build jobs."
+                    echo "status=failure" >> $GITHUB_OUTPUT
+                    exit 1
+                  fi
+                  echo "::notice::✅ All validation checks passed! PR is ready for review."
+                  echo "status=success" >> $GITHUB_OUTPUT
+            
+            - name: Add success label
+              if: success()
+              uses: actions-ecosystem/action-add-labels@v1
+              with:
+                  labels: build success
+            
+            - name: Add failure label
+              if: failure()
+              uses: actions-ecosystem/action-add-labels@v1
+              with:
+                  labels: build failed
+
+            - name: Comment on PR - Success
+              if: success()
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                  issue-number: ${{ github.event.pull_request.number }}
+                  body: |
+                      ## ✅ PR Validation Passed!
+                      
+                      All automated checks have completed successfully. This PR is ready for review! 🎉
+                      
+                      ### Validation Results
+                      
+                      | Check | Status | Details |
+                      |-------|--------|---------|
+                      | 🧪 **Unit Tests** | ✅ Passed | All tests executed successfully |
+                      | 🏗️ **Build** | ✅ Passed | Project built without errors |
+                      | 📚 **Storybook Build** | ✅ Passed | Storybook compiled successfully |
+                      
+                      ### Next Steps
+                      
+                      1. 👀 **Code Review**: Request reviews from team members
+                      2. ✍️ **Review Changes**: Ensure all changes meet project standards
+                      3. 🔀 **Merge**: Once approved, merge this PR to trigger the release workflow
+                      
+                      ### What Happens After Merge?
+                      
+                      When this PR is merged to `main`, the following will happen automatically:
+                      
+                      - 🧪 Tests will run again
+                      - 🏗️ Production build will be created
+                      - 📤 Storybook will be published to **Chromatic**
+                      - 📦 **Semantic release** will analyze commits and:
+                        - Increment version automatically (based on commit types)
+                        - Generate `CHANGELOG.md`
+                        - Publish to **npm**
+                        - Create **GitHub Release**
+                      
+                      ---
+                      
+                      <sub>🤖 This comment was automatically generated by the PR validation workflow</sub>
+                      <sub>🏷️ Label applied: **build success**</sub>
+                      <sub>Run ID: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+
+            - name: Comment on PR - Failure
+              if: failure()
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                  issue-number: ${{ github.event.pull_request.number }}
+                  body: |
+                      ## ❌ PR Validation Failed
+                      
+                      Some automated checks have failed. Please review the errors below and fix them.
+                      
+                      ### Validation Results
+                      
+                      | Check | Status | Details |
+                      |-------|--------|---------|
+                      | 🧪 **Unit Tests** | ${{ needs.test.result == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.test.result == 'success' && 'All tests passed' || 'Some tests failed - check logs' }} |
+                      | 🏗️ **Build** | ${{ needs.build.result == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.build.result == 'success' && 'Build successful' || 'Build failed - check logs' }} |
+                      
+                      ---
+                      
+                      ## 🔍 Error Details
+                      
+                      ${{ steps.check-results.outputs.error_summary }}
+                      
+                      ---
+                      
+                      ### 💡 How to Debug
+                      
+                      1. **View detailed logs**: [Click here to view the full workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                      2. **Run locally to reproduce**: 
+                         ```bash
+                         pnpm install
+                         pnpm test      # Run tests
+                         pnpm build     # Build project
+                         pnpm build-storybook  # Build Storybook
+                         ```
+                      3. **Fix the issues** and push new commits
+                      4. The workflow will run automatically on new commits
+                      
+                      ### 📚 Common Solutions
+                      
+                      <details>
+                      <summary><b>Tests failing</b></summary>
+                      
+                      - Check test output for specific assertion failures
+                      - Verify all test dependencies are installed
+                      - Run tests locally: `pnpm test`
+                      - Check for async/await issues or timing problems
+                      </details>
+                      
+                      <details>
+                      <summary><b>Build failing</b></summary>
+                      
+                      - Look for TypeScript compilation errors
+                      - Check for missing imports or dependencies
+                      - Verify all required environment variables
+                      - Run build locally: `pnpm build`
+                      </details>
+                      
+                      <details>
+                      <summary><b>Storybook build failing</b></summary>
+                      
+                      - Check story files for syntax errors
+                      - Verify Storybook configuration
+                      - Run locally: `pnpm build-storybook`
+                      - Check for component import issues
+                      </details>
+                      
+                      ---
+                      
+                      <sub>🤖 This comment was automatically generated by the PR validation workflow</sub>
+                      <sub>🏷️ Label applied: **build failed**</sub>
+                      <sub>Run ID: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+
