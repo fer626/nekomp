@@ -209,12 +209,21 @@ jobs:
                   echo "@fer626:registry=https://npm.pkg.github.com" >> .npmrc
 
             - name: Publish to GitHub Packages
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-              run: |
-                  echo "::notice::Publishing preview version to GitHub Packages..."
-                  pnpm publish --no-git-checks --access public
-                  echo "::notice::✅ Successfully published preview version!"
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  registry-url: 'https://registry.npmjs.org'
+              # run: |
+              #     echo "::notice::Publishing preview version to GitHub Packages..."
+              #     pnpm publish --no-git-checks --access public
+              #     echo "::notice::✅ Successfully published preview version!"
+
+            - name: Update npm
+              run: npm install -g npm@latest
+            - run: npm ci
+            - run: npm run build --if-present
+            - run: npm test
+            - run: npm publish
 
             - name: Comment preview version on PR
               uses: peter-evans/create-or-update-comment@v4
