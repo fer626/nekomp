@@ -1,0 +1,243 @@
+name: Release Nekomponents
+description: |
+    This workflow is triggered on push to the main branch.
+    It runs tests, builds the project, publishes to Chromatic, and creates a release using semantic-release.
+
+on:
+    push:
+        branches:
+            - main
+        paths-ignore:
+            - 'CHANGELOG.md'
+            - 'package.json'
+            - 'pnpm-lock.yaml'
+    workflow_dispatch:
+
+env:
+    HUSKY: 0
+    NODE_OPTIONS: --max_old_space_size=4096
+
+jobs:
+    setup:
+        runs-on: ubuntu-latest
+        name: Setup dependencies and cache
+        outputs:
+            NODE_VERSION: ${{ steps.get-versions.outputs.NODE_VERSION }}
+            PNPM_VERSION: ${{ steps.get-versions.outputs.PNPM_VERSION }}
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  fetch-tags: true
+
+            - name: Install system dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y jq
+
+            - name: Get package manager version and node version
+              id: get-versions
+              run: |
+                  # Get package manager version from package.json using packageManager key (format is pnpm@10.17.1)
+                  PNPM_VERSION=$(cat package.json | jq -r '.packageManager' | awk -F'@' '{print $2}')
+                  if [ -z "$PNPM_VERSION" ]; then PNPM_VERSION="10"; fi
+                  # Use Node 20 as specified in current workflow
+                  NODE_VERSION="20"
+                  echo "::notice::Node version: $NODE_VERSION"
+                  echo "::notice::PNPM version: $PNPM_VERSION"
+                  # Set to output for next steps
+                  echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_OUTPUT
+                  echo "PNPM_VERSION=$PNPM_VERSION" >> $GITHUB_OUTPUT
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ steps.get-versions.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ steps.get-versions.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+    test:
+        runs-on: ubuntu-latest
+        name: Run unit tests
+        needs: setup
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Run tests
+              run: pnpm test
+
+    build:
+        runs-on: ubuntu-latest
+        name: Build project
+        needs: [setup, test]
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Build project
+              run: pnpm build
+
+            - name: Build Storybook
+              run: pnpm build-storybook
+
+            - name: Upload build artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: build-artifacts-${{ github.sha }}
+                  path: |
+                      dist/
+                      storybook-static/
+                  retention-days: 30
+
+    publish-chromatic:
+        runs-on: ubuntu-latest
+        name: Publish to Chromatic
+        needs: [setup, build]
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Download build artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: build-artifacts-${{ github.sha }}
+
+            - name: Publish to Chromatic
+              env:
+                  CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+              run: |
+                  echo "::notice::Publishing Storybook to Chromatic..."
+                  pnpm chromatic --exit-zero-on-changes
+                  echo "::notice::✅ Successfully published to Chromatic!"
+
+    release:
+        runs-on: ubuntu-latest
+        name: Create semantic release
+        needs: [setup, test, build, publish-chromatic]
+        permissions:
+            contents: write
+            issues: write
+            pull-requests: write
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  fetch-tags: true
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Set up git user for semantic-release
+              run: |
+                  git config --global user.name "github-actions[bot]"
+                  git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+            - name: Download build artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: build-artifacts-${{ github.sha }}
+                  path: dist/
+
+            - name: Run semantic-release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  echo "::notice::Running semantic-release..."
+                  npx semantic-release
+                  echo "::notice::✅ Semantic release completed successfully!"
+
+    release-summary:
+        runs-on: ubuntu-latest
+        name: Release Summary
+        needs: [setup, test, build, publish-chromatic, release]
+        if: always()
+        steps:
+            - name: Check job results
+              run: |
+                  if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.build.result }}" == "failure" ] || [ "${{ needs.publish-chromatic.result }}" == "failure" ] || [ "${{ needs.release.result }}" == "failure" ]; then
+                    echo "::error::Release pipeline failed! Please check the logs above."
+                    exit 1
+                  fi
+                  echo "::notice::🎉 Release pipeline completed successfully!"
+                  echo "::notice::✅ Tests passed"
+                  echo "::notice::✅ Build successful"
+                  echo "::notice::✅ Published to Chromatic"
+                  echo "::notice::✅ Semantic release completed"
+
