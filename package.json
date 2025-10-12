@@ -17,12 +17,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fer626/nekomponents.git"
+    "url": "https://github.com/fer626/nekomp.git"
   },
   "bugs": {
-    "url": "https://github.com/fer626/nekomponents/issues"
+    "url": "https://github.com/fer626/nekomp/issues"
   },
-  "homepage": "https://github.com/fer626/nekomponents#readme",
+  "homepage": "https://github.com/fer626/nekomp#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
