@@ -85,6 +85,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Set up git user and remote for semantic-release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/fer626/nekomponents.git
+
       - name: Semantic Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
