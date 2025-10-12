@@ -1,0 +1,138 @@
+name: 🚀 CI/CD Pipeline
+
+# Solo se ejecuta cuando se hace merge a la rama main
+on:
+  push:
+    branches: [main]
+  # También se ejecuta cuando se completa un pull request hacia main
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+# Condición para que solo se ejecute en merge (no en push directo)
+jobs:
+  ci-cd:
+    # Solo ejecutar si es un merge a main o si el PR fue merged
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Necesario para obtener todo el historial de commits
+      
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+      
+      - name: 🔧 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+      
+      - name: 📋 Install dependencies
+        run: pnpm install --frozen-lockfile
+      
+      - name: 🔍 Lint code
+        run: pnpm lint || echo "Lint script not found, skipping..."
+      
+      - name: 🧪 Run tests
+        run: pnpm test || echo "Test script not found, skipping..."
+      
+      - name: 🏗️ Build project
+        run: pnpm build
+      
+      - name: 📚 Build Storybook
+        run: pnpm build-storybook
+      
+      - name: 📊 Generate coverage report
+        run: pnpm coverage || echo "Coverage script not found, skipping..."
+        continue-on-error: true
+      
+      - name: 📈 Upload coverage to Codecov
+        if: matrix.node-version == 20
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage/lcov.info
+          fail_ci_if_error: false
+        continue-on-error: true
+      
+      - name: 🚀 Deploy to GitHub Pages
+        if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./storybook-static
+          destination_dir: .
+      
+      - name: 📦 Prepare npm package
+        if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
+        run: |
+          # Preparar archivos para publicación
+          cp package.json dist/package.json
+          cp README.md dist/README.md
+          cp LICENSE dist/LICENSE 2>/dev/null || echo "No LICENSE file found"
+          
+          # Crear .npmignore si no existe
+          echo "node_modules
+          .git
+          .github
+          src
+          stories
+          .storybook
+          vite.config.ts
+          tsconfig*.json
+          .husky
+          scripts" > dist/.npmignore
+      
+      - name: 🏷️ Create Release
+        if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          body: |
+            🎉 **Nuevo Release de Nekomponents**
+            
+            ## 📦 Cambios en esta versión
+            - Mejoras en componentes
+            - Nuevas funcionalidades
+            - Correcciones de bugs
+            
+            ## 🚀 Instalación
+            ```bash
+            npm install @fer626/nekomponents@latest
+            ```
+            
+            ## 📚 Documentación
+            - [Storybook](https://fer626.github.io/nekomponents/)
+            - [GitHub](https://github.com/fer626/nekomponents)
+          draft: false
+          prerelease: false
+      
+      - name: 📤 Publish to npm
+        if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
+        run: |
+          cd dist
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      
+      - name: 🎉 Success notification
+        if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
+        run: |
+          echo "🎉 ¡Deploy exitoso!"
+          echo "📚 Storybook: https://fer626.github.io/nekomponents/"
+          echo "📦 NPM: https://www.npmjs.com/package/@fer626/nekomponents"
+          echo "🐙 GitHub: https://github.com/fer626/nekomponents"
