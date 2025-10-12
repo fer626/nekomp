@@ -30,6 +30,7 @@
   "scripts": {
     "delete:packages": "rm -rf node_modules",
     "reset:packages": "pnpm delete:packages && pnpm install",
+    "test": "echo \"Error: no test files added\"",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
