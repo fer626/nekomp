@@ -195,12 +195,19 @@ jobs:
 
             - name: Configure npm for GitHub Packages
               run: |
-                  echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+                  # Use PAT if available, otherwise use GITHUB_TOKEN
+                  if [ -n "${{ secrets.GH_PACKAGES_TOKEN }}" ]; then
+                    echo "::notice::Using GH_PACKAGES_TOKEN for authentication"
+                    echo "//npm.pkg.github.com/:_authToken=${{ secrets.GH_PACKAGES_TOKEN }}" > .npmrc
+                  else
+                    echo "::notice::Using GITHUB_TOKEN for authentication"
+                    echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+                  fi
                   echo "@fer626:registry=https://npm.pkg.github.com" >> .npmrc
 
             - name: Publish to GitHub Packages
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
               run: |
                   echo "::notice::Publishing preview version to GitHub Packages..."
                   pnpm publish --no-git-checks --access public
