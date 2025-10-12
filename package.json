@@ -1,6 +1,6 @@
 {
   "name": "@fer626/nekomponents",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "packageManager": "pnpm@10.17.1",
   "description": "A modern Vue 3 component library built with TypeScript, Tailwind CSS 4, and best practices",
