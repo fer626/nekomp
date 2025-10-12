@@ -37,6 +37,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
       
       - name: 📋 Install dependencies
         run: pnpm install --frozen-lockfile
@@ -124,6 +125,14 @@ jobs:
       - name: 📤 Publish to npm
         if: matrix.node-version == 20 && github.ref == 'refs/heads/main'
         run: |
+          # Configurar npm para usar la última versión
+          npm install -g npm@latest
+          npm --version
+          
+          # Configurar autenticación
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          
+          # Publicar paquete
           cd dist
           npm publish --access public
         env:

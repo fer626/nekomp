@@ -26,6 +26,7 @@ jobs:
         with:
           node-version: 20
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
       
       - name: 📋 Install dependencies
         run: pnpm install --frozen-lockfile
@@ -86,8 +87,19 @@ jobs:
       
       - name: 📤 Publish to npm
         run: |
+          # Instalar y usar la última versión de npm
+          npm install -g npm@latest
+          npm --version
+          
+          # Configurar autenticación con npm
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          
+          # Verificar configuración
+          npm whoami || echo "No autenticado aún"
+          
+          # Publicar paquete
           cd dist
-          npm publish --access public
+          npm publish --access public --verbose
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       
