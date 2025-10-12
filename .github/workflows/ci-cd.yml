@@ -35,9 +35,9 @@ jobs:
         run: pnpm test
 
       - name: Execute chromatic deploy
-        run: pnpm run chromatic
         env:
           CHROMATIC_PROJECT_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+        run: pnpm run chromatic
 
       - name: Finish
         run: echo "Finish him!"
