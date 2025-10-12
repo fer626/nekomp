@@ -175,6 +175,10 @@ jobs:
         runs-on: ubuntu-latest
         name: Create semantic release
         needs: [setup, test, build, publish-chromatic]
+        outputs:
+            new_version: ${{ steps.get-version.outputs.new_version }}
+            release_url: ${{ steps.get-version.outputs.release_url }}
+            published: ${{ steps.check-release.outputs.published }}
         permissions:
             contents: write
             issues: write
@@ -214,6 +218,7 @@ jobs:
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
             - name: Run semantic-release
+              id: semantic-release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -223,15 +228,96 @@ jobs:
                   npx semantic-release
                   echo "::notice::✅ Semantic release completed successfully!"
 
+            - name: Check if release was published
+              id: check-release
+              run: |
+                  # Check if package.json was updated (indicates a new release)
+                  git fetch origin main
+                  CURRENT_VERSION=$(cat package.json | jq -r '.version')
+                  echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+                  # Check if semantic-release created a new release
+                  if git diff HEAD~1 HEAD --name-only | grep -q "package.json"; then
+                    echo "published=true" >> $GITHUB_OUTPUT
+                    echo "::notice::New release detected: v$CURRENT_VERSION"
+                  else
+                    echo "published=false" >> $GITHUB_OUTPUT
+                    echo "::notice::No new release was created"
+                  fi
+
+            - name: Get new version and release info
+              id: get-version
+              if: steps.check-release.outputs.published == 'true'
+              run: |
+                  NEW_VERSION=$(cat package.json | jq -r '.version')
+                  echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+                  RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/v${NEW_VERSION}"
+                  echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+                  echo "::notice::New version: $NEW_VERSION"
+                  echo "::notice::Release URL: $RELEASE_URL"
+
+    publish-github-packages:
+        runs-on: ubuntu-latest
+        name: Publish to GitHub Packages
+        needs: [setup, release]
+        if: needs.release.outputs.published == 'true'
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - name: Checkout code (after semantic-release)
+              uses: actions/checkout@v4
+              with:
+                  ref: main
+                  fetch-depth: 0
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@fer626'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Build package
+              run: pnpm build
+
+            - name: Configure npm for GitHub Packages
+              run: |
+                  echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+                  echo "@fer626:registry=https://npm.pkg.github.com" >> .npmrc
+
+            - name: Publish to GitHub Packages
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  echo "::notice::Publishing version ${{ needs.release.outputs.new_version }} to GitHub Packages..."
+                  pnpm publish --no-git-checks --access public
+                  echo "::notice::✅ Successfully published to GitHub Packages!"
+
+            - name: Verify publication
+              run: |
+                  echo "::notice::Package published successfully!"
+                  echo "::notice::📦 Package: @fer626/nekomponents@${{ needs.release.outputs.new_version }}"
+                  echo "::notice::🔗 View at: https://github.com/fer626/nekomp/packages"
+
     release-summary:
         runs-on: ubuntu-latest
         name: Release Summary
-        needs: [setup, test, build, publish-chromatic, release]
+        needs: [setup, test, build, publish-chromatic, release, publish-github-packages]
         if: always()
         steps:
             - name: Check job results
               run: |
-                  if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.build.result }}" == "failure" ] || [ "${{ needs.publish-chromatic.result }}" == "failure" ] || [ "${{ needs.release.result }}" == "failure" ]; then
+                  if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.build.result }}" == "failure" ] || [ "${{ needs.publish-chromatic.result }}" == "failure" ] || [ "${{ needs.release.result }}" == "failure" ] || [ "${{ needs.publish-github-packages.result }}" == "failure" ]; then
                     echo "::error::Release pipeline failed! Please check the logs above."
                     exit 1
                   fi
@@ -240,4 +326,175 @@ jobs:
                   echo "::notice::✅ Build successful"
                   echo "::notice::✅ Published to Chromatic"
                   echo "::notice::✅ Semantic release completed"
+                  echo "::notice::✅ Published to GitHub Packages"
+
+    send-notification-email:
+        runs-on: ubuntu-latest
+        name: Send Release Notification Email
+        needs: [release, publish-github-packages, release-summary]
+        if: success() && needs.release.outputs.published == 'true'
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  ref: main
+                  fetch-depth: 0
+
+            - name: Get PR details
+              id: pr-details
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const sha = context.sha;
+                      
+                      // Get commit details
+                      const commit = await github.rest.repos.getCommit({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          ref: sha
+                      });
+                      
+                      // Find associated PR
+                      const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          commit_sha: sha
+                      });
+                      
+                      let prInfo = {
+                          number: 'N/A',
+                          title: 'Direct push to main',
+                          url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/commit/${sha}`,
+                          approver: 'N/A',
+                          merger: commit.data.commit.author.name || 'N/A'
+                      };
+                      
+                      if (prs.data.length > 0) {
+                          const pr = prs.data[0];
+                          prInfo.number = pr.number;
+                          prInfo.title = pr.title;
+                          prInfo.url = pr.html_url;
+                          prInfo.merger = pr.merged_by?.login || prInfo.merger;
+                          
+                          // Get PR reviews to find approver
+                          const reviews = await github.rest.pulls.listReviews({
+                              owner: context.repo.owner,
+                              repo: context.repo.repo,
+                              pull_request_number: pr.number
+                          });
+                          
+                          const approval = reviews.data.find(r => r.state === 'APPROVED');
+                          if (approval) {
+                              prInfo.approver = approval.user.login;
+                          }
+                      }
+                      
+                      core.setOutput('pr_number', prInfo.number);
+                      core.setOutput('pr_title', prInfo.title);
+                      core.setOutput('pr_url', prInfo.url);
+                      core.setOutput('approver', prInfo.approver);
+                      core.setOutput('merger', prInfo.merger);
+
+            - name: Send email notification
+              uses: dawidd6/action-send-mail@v3
+              with:
+                  server_address: ${{ secrets.MAIL_SERVER }}
+                  server_port: ${{ secrets.MAIL_PORT }}
+                  username: ${{ secrets.MAIL_USERNAME }}
+                  password: ${{ secrets.MAIL_PASSWORD }}
+                  subject: '🎉 New Nekomponents Release: v${{ needs.release.outputs.new_version }}'
+                  to: ${{ secrets.MAIL_TO }}
+                  from: ${{ secrets.MAIL_FROM }}
+                  html_body: |
+                      <!DOCTYPE html>
+                      <html>
+                      <head>
+                          <style>
+                              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+                              .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }
+                              .header h1 { margin: 0; font-size: 28px; }
+                              .version { font-size: 36px; font-weight: bold; margin: 10px 0; }
+                              .section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #667eea; }
+                              .section h2 { margin-top: 0; color: #667eea; font-size: 18px; }
+                              .info-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 8px; background: white; border-radius: 4px; }
+                              .label { font-weight: bold; color: #666; }
+                              .value { color: #333; }
+                              .code-block { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 14px; overflow-x: auto; }
+                              .button { display: inline-block; padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; margin: 10px 5px; font-weight: bold; }
+                              .button:hover { background: #764ba2; }
+                              .footer { text-align: center; color: #999; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
+                              .emoji { font-size: 24px; }
+                          </style>
+                      </head>
+                      <body>
+                          <div class="header">
+                              <div class="emoji">🎉</div>
+                              <h1>New Release Published!</h1>
+                              <div class="version">v${{ needs.release.outputs.new_version }}</div>
+                              <p>Nekomponents Component Library</p>
+                          </div>
+                          
+                          <div class="section">
+                              <h2>📦 Release Information</h2>
+                              <div class="info-row">
+                                  <span class="label">Version:</span>
+                                  <span class="value">v${{ needs.release.outputs.new_version }}</span>
+                              </div>
+                              <div class="info-row">
+                                  <span class="label">PR Number:</span>
+                                  <span class="value">#${{ steps.pr-details.outputs.pr_number }}</span>
+                              </div>
+                              <div class="info-row">
+                                  <span class="label">PR Title:</span>
+                                  <span class="value">${{ steps.pr-details.outputs.pr_title }}</span>
+                              </div>
+                              <div class="info-row">
+                                  <span class="label">Approved by:</span>
+                                  <span class="value">@${{ steps.pr-details.outputs.approver }}</span>
+                              </div>
+                              <div class="info-row">
+                                  <span class="label">Merged by:</span>
+                                  <span class="value">@${{ steps.pr-details.outputs.merger }}</span>
+                              </div>
+                          </div>
+                          
+                          <div class="section">
+                              <h2>📥 Installation</h2>
+                              <p><strong>GitHub Packages (Recommended):</strong></p>
+                              <div class="code-block">
+                                  <p># Add to your .npmrc:</p>
+                                  <p>&#64;fer626:registry=https://npm.pkg.github.com</p>
+                                  <p>//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN</p>
+                                  <p>&nbsp;</p>
+                                  <p># Install with npm:</p>
+                                  <p>npm install &#64;fer626/nekomponents&#64;${{ needs.release.outputs.new_version }}</p>
+                                  <p>&nbsp;</p>
+                                  <p># Or with pnpm:</p>
+                                  <p>pnpm add &#64;fer626/nekomponents&#64;${{ needs.release.outputs.new_version }}</p>
+                              </div>
+                          </div>
+                          
+                          <div class="section">
+                              <h2>🔗 Quick Links</h2>
+                              <a href="${{ needs.release.outputs.release_url }}" class="button">📋 View Release Notes</a>
+                              <a href="${{ steps.pr-details.outputs.pr_url }}" class="button">🔀 View Pull Request</a>
+                              <a href="https://github.com/fer626/nekomp/packages" class="button">📦 GitHub Packages</a>
+                              <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" class="button">⚙️ View Workflow</a>
+                          </div>
+                          
+                          <div class="section">
+                              <h2>✅ Published To</h2>
+                              <ul>
+                                  <li>✨ <strong>GitHub Packages</strong> - Available now</li>
+                                  <li>📚 <strong>Chromatic</strong> - Storybook deployed</li>
+                                  <li>📖 <strong>GitHub Releases</strong> - Documentation updated</li>
+                              </ul>
+                          </div>
+                          
+                          <div class="footer">
+                              <p>🤖 This email was automatically generated by GitHub Actions</p>
+                              <p>Workflow Run ID: ${{ github.run_id }}</p>
+                          </div>
+                      </body>
+                      </html>
 

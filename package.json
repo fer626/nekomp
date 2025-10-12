@@ -25,7 +25,7 @@
   "homepage": "https://github.com/fer626/nekomp#readme",
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://npm.pkg.github.com/@fer626"
   },
   "scripts": {
     "delete:packages": "rm -rf node_modules",

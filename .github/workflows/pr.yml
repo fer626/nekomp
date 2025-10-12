@@ -137,10 +137,115 @@ jobs:
                       storybook-static/
                   retention-days: 7
 
+    publish-pr-preview:
+        runs-on: ubuntu-latest
+        name: Publish PR Preview to GitHub Packages
+        needs: [setup, test, build]
+        if: success()
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.ref }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: ${{ needs.setup.outputs.PNPM_VERSION }}
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ needs.setup.outputs.NODE_VERSION }}
+                  cache: 'pnpm'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@fer626'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile --prefer-offline
+
+            - name: Download build artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: build-artifacts-pr-${{ github.event.pull_request.number }}
+
+            - name: Generate preview version
+              id: preview-version
+              run: |
+                  # Get current version from package.json
+                  CURRENT_VERSION=$(cat package.json | jq -r '.version')
+                  # Generate a short hash from PR number and run ID
+                  SHORT_HASH=$(echo "${{ github.event.pull_request.number }}-${{ github.run_id }}" | sha256sum | cut -c1-8)
+                  # Create preview version: current-version-pr.PR_NUMBER.SHORT_HASH
+                  PREVIEW_VERSION="${CURRENT_VERSION}-pr.${{ github.event.pull_request.number }}.${SHORT_HASH}"
+                  echo "preview_version=$PREVIEW_VERSION" >> $GITHUB_OUTPUT
+                  echo "::notice::Preview version: $PREVIEW_VERSION"
+
+            - name: Update package.json with preview version
+              run: |
+                  # Update version in package.json temporarily
+                  jq --arg version "${{ steps.preview-version.outputs.preview_version }}" '.version = $version' package.json > package.json.tmp
+                  mv package.json.tmp package.json
+                  echo "::notice::Updated package.json to version: ${{ steps.preview-version.outputs.preview_version }}"
+
+            - name: Configure npm for GitHub Packages
+              run: |
+                  echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" > .npmrc
+                  echo "@fer626:registry=https://npm.pkg.github.com" >> .npmrc
+
+            - name: Publish to GitHub Packages
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  echo "::notice::Publishing preview version to GitHub Packages..."
+                  pnpm publish --no-git-checks --access public
+                  echo "::notice::✅ Successfully published preview version!"
+
+            - name: Comment preview version on PR
+              uses: peter-evans/create-or-update-comment@v4
+              with:
+                  issue-number: ${{ github.event.pull_request.number }}
+                  body: |
+                      ## 📦 Preview Package Published!
+                      
+                      A preview version of this PR has been published to GitHub Packages.
+                      
+                      ### Installation
+                      
+                      To test this preview version, add this to your `.npmrc`:
+                      ```
+                      @fer626:registry=https://npm.pkg.github.com
+                      //npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
+                      ```
+                      
+                      Then install the preview:
+                      ```bash
+                      npm install @fer626/nekomponents@${{ steps.preview-version.outputs.preview_version }}
+                      ```
+                      
+                      Or with pnpm:
+                      ```bash
+                      pnpm add @fer626/nekomponents@${{ steps.preview-version.outputs.preview_version }}
+                      ```
+                      
+                      ### Preview Version
+                      `${{ steps.preview-version.outputs.preview_version }}`
+                      
+                      ### Package URL
+                      [View on GitHub Packages](https://github.com/fer626/nekomp/packages)
+                      
+                      ---
+                      <sub>🤖 This preview package will be available for testing until a new version is published</sub>
+
     validation-summary:
         runs-on: ubuntu-latest
         name: PR Validation Summary
-        needs: [setup, test, build]
+        needs: [setup, test, build, publish-pr-preview]
         if: always()
         steps:
             - name: Remove old build labels
