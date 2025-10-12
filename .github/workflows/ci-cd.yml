@@ -1,0 +1,41 @@
+name: Node.js CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8 # Puedes cambiar la versión si lo necesitas
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # Aquí puedes agregar los comandos de node/pnpm que necesites, por ejemplo:
+      - name: Run build
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Execute chromatic deploy
+        run: pnpm run chromatic
+
+      - name: Finish
+        run: echo "Finish him!"
