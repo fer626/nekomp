@@ -28,7 +28,7 @@ jobs:
             PNPM_VERSION: ${{ steps.get-versions.outputs.PNPM_VERSION }}
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
               with:
                   fetch-depth: 0
                   ref: ${{ github.event.pull_request.head.ref }}
@@ -73,7 +73,7 @@ jobs:
         needs: setup
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
               with:
                   fetch-depth: 0
                   ref: ${{ github.event.pull_request.head.ref }}
@@ -102,7 +102,7 @@ jobs:
         needs: [setup, test]
         steps:
             - name: Checkout code
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
               with:
                   fetch-depth: 0
                   ref: ${{ github.event.pull_request.head.ref }}
