@@ -51,7 +51,7 @@
     "@types/node": "^24.8.1",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
-    "chromatic": "^13.3.0",
+    "chromatic": "^13.3.2",
     "husky": "^9.1.7",
     "install": "^0.13.0",
     "nx": "21.6.5",
