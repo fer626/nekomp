@@ -159,7 +159,7 @@ jobs:
               run: pnpm install --frozen-lockfile --prefer-offline
 
             - name: Download build artifacts
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v6
               with:
                   name: build-artifacts-${{ github.sha }}
 
@@ -203,7 +203,7 @@ jobs:
               run: pnpm install --frozen-lockfile --prefer-offline
 
             - name: Download build artifacts
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v6
               with:
                   name: build-artifacts-${{ github.sha }}
                   path: dist/
