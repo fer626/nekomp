@@ -40,7 +40,7 @@
     "chromatic": "npx chromatic --project-token=$CHROMATIC_PROJECT_TOKEN"
   },
   "dependencies": {
-    "vue": "^3.5.22"
+    "vue": "^3.5.25"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
